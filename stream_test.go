@@ -10,7 +10,7 @@ import (
 
 type fakeSmuxStream struct {
 	smux.Stream
-	conn      *fakeSmuxConn
+	conn      *fakeconn
 	closeLock sync.Mutex
 	closed    chan struct{}
 }

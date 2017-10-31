@@ -2,6 +2,7 @@ package muxtest
 
 import (
 	"bytes"
+	"context"
 	crand "crypto/rand"
 	"fmt"
 	"io"
@@ -12,14 +13,16 @@ import (
 	"sync"
 	"testing"
 
+	peer "github.com/libp2p/go-libp2p-peer"
 	ps "github.com/libp2p/go-peerstream"
 
-	smux "github.com/jbenet/go-stream-muxer"
-	tcpc "github.com/libp2p/go-tcp-transport"
+	conn "github.com/libp2p/go-libp2p-conn"
+	iconn "github.com/libp2p/go-libp2p-interface-conn"
+	tpt "github.com/libp2p/go-libp2p-transport"
+	smux "github.com/libp2p/go-stream-muxer"
+	testutil "github.com/libp2p/go-testutil"
 	ma "github.com/multiformats/go-multiaddr"
 )
-
-var zeroaddr = ma.StringCast("/ip4/0.0.0.0/tcp/0")
 
 var randomness []byte
 var nextPort = 20000
@@ -31,6 +34,11 @@ func init() {
 	if _, err := crand.Read(randomness); err != nil {
 		panic(err)
 	}
+}
+
+type listenerOpts struct {
+	transportCb func() tpt.Transport
+	localaddr   ma.Multiaddr
 }
 
 func randBuf(size int) []byte {
@@ -45,6 +53,7 @@ func randBuf(size int) []byte {
 
 func checkErr(t *testing.T, err error) {
 	if err != nil {
+		panic(err)
 		t.Fatal(err)
 	}
 }
@@ -60,9 +69,17 @@ type echoSetup struct {
 	conns []*ps.Conn
 }
 
-func singleConn(t *testing.T, tr smux.Transport) echoSetup {
-	tcp := tcpc.NewTCPTransport()
-	swarm := ps.NewSwarm(tr)
+func createConnListener(t *testing.T, lo listenerOpts, streamMuxer smux.Transport) (iconn.Listener, peer.ID) {
+	identity := testutil.RandIdentityOrFatal(t)
+	l, err := lo.transportCb().Listen(lo.localaddr)
+	checkErr(t, err)
+	cl, err := conn.WrapTransportListener(context.Background(), l, identity.ID(), streamMuxer, identity.PrivateKey())
+	checkErr(t, err)
+	return cl, identity.ID()
+}
+
+func singleConn(t *testing.T, lo listenerOpts, streamMuxer smux.Transport) echoSetup {
+	swarm := ps.NewSwarm()
 	swarm.SetStreamHandler(func(s *ps.Stream) {
 		defer s.Close()
 		log("accepted stream")
@@ -71,16 +88,17 @@ func singleConn(t *testing.T, tr smux.Transport) echoSetup {
 	})
 
 	log("listening at %s", "localhost:0")
-	d, err := tcp.Dialer(zeroaddr)
-	checkErr(t, err)
-	l, err := tcp.Listen(ma.StringCast("/ip4/0.0.0.0/tcp/0"))
-	checkErr(t, err)
-
-	_, err = swarm.AddListener(l)
+	cl, listenerID := createConnListener(t, lo, streamMuxer)
+	_, err := swarm.AddListener(cl)
 	checkErr(t, err)
 
-	log("dialing to %s", l.Multiaddr())
-	nc1, err := d.Dial(l.Multiaddr())
+	log("dialing to %s", cl.Multiaddr())
+	dialerIdentity := testutil.RandIdentityOrFatal(t)
+	cd := conn.NewDialer(dialerIdentity.ID(), dialerIdentity.PrivateKey(), nil, streamMuxer)
+	dialer, err := lo.transportCb().Dialer(cl.Multiaddr())
+	checkErr(t, err)
+	cd.AddDialer(dialer)
+	nc1, err := cd.Dial(context.Background(), cl.Multiaddr(), listenerID)
 	checkErr(t, err)
 
 	c1, err := swarm.AddConn(nc1)
@@ -92,9 +110,8 @@ func singleConn(t *testing.T, tr smux.Transport) echoSetup {
 	}
 }
 
-func makeSwarm(t *testing.T, tr smux.Transport, nListeners int) *ps.Swarm {
-	tcp := tcpc.NewTCPTransport()
-	swarm := ps.NewSwarm(tr)
+func makeSwarm(t *testing.T, lo listenerOpts, streamMuxer smux.Transport, nListeners int) *ps.Swarm {
+	swarm := ps.NewSwarm()
 	swarm.SetStreamHandler(func(s *ps.Stream) {
 		defer s.Close()
 		log("accepted stream")
@@ -104,55 +121,50 @@ func makeSwarm(t *testing.T, tr smux.Transport, nListeners int) *ps.Swarm {
 
 	for i := 0; i < nListeners; i++ {
 		log("%p listening at %s", swarm, "localhost:0")
-		l, err := tcp.Listen(ma.StringCast("/ip4/0.0.0.0/tcp/0"))
-		checkErr(t, err)
-		_, err = swarm.AddListener(l)
+		cl, _ := createConnListener(t, lo, streamMuxer)
+		_, err := swarm.AddListener(cl)
 		checkErr(t, err)
 	}
 
 	return swarm
 }
 
-func makeSwarms(t *testing.T, tr smux.Transport, nSwarms, nListeners int) []*ps.Swarm {
+func makeSwarms(t *testing.T, lo listenerOpts, streamMuxer smux.Transport, nSwarms, nListeners int) []*ps.Swarm {
 	swarms := make([]*ps.Swarm, nSwarms)
 	for i := 0; i < nSwarms; i++ {
-		swarms[i] = makeSwarm(t, tr, nListeners)
+		swarms[i] = makeSwarm(t, lo, streamMuxer, nListeners)
 	}
 	return swarms
 }
 
-func SubtestConstructSwarm(t *testing.T, tr smux.Transport) {
-	ps.NewSwarm(tr)
+func SubtestConstructSwarm(t *testing.T, lo listenerOpts, streamMuxer smux.Transport) {
+	ps.NewSwarm()
 }
 
-func SubtestSimpleWrite(t *testing.T, tr smux.Transport) {
-	tcp := tcpc.NewTCPTransport()
-	swarm := ps.NewSwarm(tr)
+func SubtestSimpleWrite(t *testing.T, lo listenerOpts, streamMuxer smux.Transport) {
+	swarm := ps.NewSwarm()
 	defer swarm.Close()
 
-	piper, pipew := io.Pipe()
 	swarm.SetStreamHandler(func(s *ps.Stream) {
 		defer s.Close()
 		log("accepted stream")
-		w := io.MultiWriter(s, pipew)
-		io.Copy(w, s) // echo everything and write it to pipew
+		io.Copy(s, s)
 		log("closing stream")
 	})
 
 	log("listening at %s", "localhost:0")
-	l, err := tcp.Listen(ma.StringCast("/ip4/0.0.0.0/tcp/0"))
+	cl, listenerID := createConnListener(t, lo, streamMuxer)
+	_, err := swarm.AddListener(cl)
 	checkErr(t, err)
 
-	_, err = swarm.AddListener(l)
+	log("dialing to %s", cl.Addr().String())
+	dialerIdentity := testutil.RandIdentityOrFatal(t)
+	cd := conn.NewDialer(dialerIdentity.ID(), dialerIdentity.PrivateKey(), nil, streamMuxer)
+	dialer, err := lo.transportCb().Dialer(cl.Multiaddr())
 	checkErr(t, err)
-
-	d, err := tcp.Dialer(zeroaddr)
+	cd.AddDialer(dialer)
+	nc1, err := cd.Dial(context.Background(), cl.Multiaddr(), listenerID)
 	checkErr(t, err)
-
-	log("dialing to %s", l.Addr().String())
-	nc1, err := d.Dial(l.Multiaddr())
-	checkErr(t, err)
-
 	c1, err := swarm.AddConn(nc1)
 	checkErr(t, err)
 	defer c1.Close()
@@ -160,7 +172,6 @@ func SubtestSimpleWrite(t *testing.T, tr smux.Transport) {
 	log("creating stream")
 	s1, err := c1.NewStream()
 	checkErr(t, err)
-	defer s1.Close()
 
 	buf1 := randBuf(4096)
 	log("writing %d bytes to stream", len(buf1))
@@ -169,26 +180,17 @@ func SubtestSimpleWrite(t *testing.T, tr smux.Transport) {
 
 	buf2 := make([]byte, len(buf1))
 	log("reading %d bytes from stream (echoed)", len(buf2))
-	_, err = s1.Read(buf2)
+	_, err = io.ReadFull(s1, buf2)
 	checkErr(t, err)
 	if string(buf2) != string(buf1) {
-		t.Error("buf1 and buf2 not equal: %s != %s", string(buf1), string(buf2))
-	}
-
-	buf3 := make([]byte, len(buf1))
-	log("reading %d bytes from pipe (tee)", len(buf3))
-	_, err = piper.Read(buf3)
-	checkErr(t, err)
-	if string(buf3) != string(buf1) {
-		t.Error("buf1 and buf3 not equal: %s != %s", string(buf1), string(buf3))
+		t.Errorf("buf1 and buf2 not equal: %#v != %#v", buf1, buf2)
 	}
 }
 
-func SubtestSimpleWrite100msgs(t *testing.T, tr smux.Transport) {
-
+func SubtestSimpleWrite100msgs(t *testing.T, lo listenerOpts, streamMuxer smux.Transport) {
 	msgs := 100
 	msgsize := 1 << 19
-	es := singleConn(t, tr)
+	es := singleConn(t, lo, streamMuxer)
 	defer es.swarm.Close()
 
 	log("creating stream")
@@ -233,12 +235,10 @@ func SubtestSimpleWrite100msgs(t *testing.T, tr smux.Transport) {
 			}
 		}
 	}()
-
 	wg.Wait()
 }
 
-func SubtestStressNSwarmNConnNStreamNMsg(t *testing.T, tr smux.Transport, nSwarm, nConn, nStream, nMsg int) {
-
+func SubtestStressNSwarmNConnNStreamNMsg(t *testing.T, lo listenerOpts, streamMuxer smux.Transport, nSwarm, nConn, nStream, nMsg int) {
 	msgsize := 1 << 11
 
 	rateLimitN := 5000
@@ -259,7 +259,7 @@ func SubtestStressNSwarmNConnNStreamNMsg(t *testing.T, tr smux.Transport, nSwarm
 		for i := 0; i < nMsg; i++ {
 			buf := randBuf(msgsize)
 			bufs <- buf
-			log("%p writing %d bytes (message %d/%d #%x)", s, len(buf), i, nMsg, buf[:3])
+			// log("%p writing %d bytes (message %d/%d #%x)", s, len(buf), i, nMsg, buf[:3])
 			if _, err := s.Write(buf); err != nil {
 				t.Error(fmt.Errorf("s.Write(buf): %s", err))
 				continue
@@ -274,10 +274,10 @@ func SubtestStressNSwarmNConnNStreamNMsg(t *testing.T, tr smux.Transport, nSwarm
 		i := 0
 		for buf1 := range bufs {
 			i++
-			log("%p reading %d bytes (message %d/%d #%x)", s, len(buf1), i-1, nMsg, buf1[:3])
+			// log("%p reading %d bytes (message %d/%d #%x)", s, len(buf1), i-1, nMsg, buf1[:3])
 
 			if _, err := io.ReadFull(s, buf2); err != nil {
-				log("%p failed to read %d bytes (message %d/%d #%x)", s, len(buf1), i-1, nMsg, buf1[:3])
+				// log("%p failed to read %d bytes (message %d/%d #%x)", s, len(buf1), i-1, nMsg, buf1[:3])
 				t.Error(fmt.Errorf("io.ReadFull(s, buf2): %s", err))
 				continue
 			}
@@ -311,18 +311,14 @@ func SubtestStressNSwarmNConnNStreamNMsg(t *testing.T, tr smux.Transport, nSwarm
 
 		ls := b.Listeners()
 		l := ls[mrand.Intn(len(ls))]
-		nl := l.NetListener()
-		nla := nl.Addr()
 
-		tcp := tcpc.NewTCPTransport()
-		d, err := tcp.Dialer(zeroaddr)
+		dialerIdentity := testutil.RandIdentityOrFatal(t)
+		cd := conn.NewDialer(dialerIdentity.ID(), dialerIdentity.PrivateKey(), nil, streamMuxer)
+		dialer, err := lo.transportCb().Dialer(l.Multiaddr())
 		checkErr(t, err)
-
-		nc, err := d.Dial(nl.Multiaddr())
-		if err != nil {
-			t.Fatal(fmt.Errorf("net.Dial(%s, %s): %s", nla.Network(), nla.String(), err))
-			return
-		}
+		cd.AddDialer(dialer)
+		nc, err := cd.Dial(context.Background(), l.Multiaddr(), peer.ID(0))
+		checkErr(t, err)
 
 		c, err := a.AddConn(nc)
 		if err != nil {
@@ -339,6 +335,7 @@ func SubtestStressNSwarmNConnNStreamNMsg(t *testing.T, tr smux.Transport, nSwarm
 			})
 		}
 		wg.Wait()
+		log("Closing connection")
 		c.Close()
 	}
 
@@ -374,7 +371,7 @@ func SubtestStressNSwarmNConnNStreamNMsg(t *testing.T, tr smux.Transport, nSwarm
 		wg.Wait()
 	}
 
-	swarms := makeSwarms(t, tr, nSwarm, 3) // 3 listeners per swarm.
+	swarms := makeSwarms(t, lo, streamMuxer, nSwarm, 3) // 3 listeners per swarm.
 	connectSwarmsAndRW(swarms)
 	for _, s := range swarms {
 		s.Close()
@@ -382,32 +379,31 @@ func SubtestStressNSwarmNConnNStreamNMsg(t *testing.T, tr smux.Transport, nSwarm
 
 }
 
-func SubtestStress1Swarm1Conn1Stream1Msg(t *testing.T, tr smux.Transport) {
-	SubtestStressNSwarmNConnNStreamNMsg(t, tr, 1, 1, 1, 1)
+func SubtestStress1Swarm1Conn1Stream1Msg(t *testing.T, lo listenerOpts, streamMuxer smux.Transport) {
+	SubtestStressNSwarmNConnNStreamNMsg(t, lo, streamMuxer, 1, 1, 1, 1)
 }
 
-func SubtestStress1Swarm1Conn1Stream100Msg(t *testing.T, tr smux.Transport) {
-	SubtestStressNSwarmNConnNStreamNMsg(t, tr, 1, 1, 1, 100)
+func SubtestStress1Swarm1Conn1Stream100Msg(t *testing.T, lo listenerOpts, streamMuxer smux.Transport) {
+	SubtestStressNSwarmNConnNStreamNMsg(t, lo, streamMuxer, 1, 1, 1, 100)
 }
 
-func SubtestStress1Swarm1Conn100Stream100Msg(t *testing.T, tr smux.Transport) {
-	SubtestStressNSwarmNConnNStreamNMsg(t, tr, 1, 1, 100, 100)
+func SubtestStress1Swarm1Conn100Stream100Msg(t *testing.T, lo listenerOpts, streamMuxer smux.Transport) {
+	SubtestStressNSwarmNConnNStreamNMsg(t, lo, streamMuxer, 1, 1, 300, 100)
 }
 
-func SubtestStress1Swarm10Conn50Stream50Msg(t *testing.T, tr smux.Transport) {
-	SubtestStressNSwarmNConnNStreamNMsg(t, tr, 1, 10, 50, 50)
+func SubtestStress1Swarm10Conn50Stream50Msg(t *testing.T, lo listenerOpts, streamMuxer smux.Transport) {
+	SubtestStressNSwarmNConnNStreamNMsg(t, lo, streamMuxer, 1, 10, 50, 50)
 }
 
-func SubtestStress5Swarm2Conn20Stream20Msg(t *testing.T, tr smux.Transport) {
-	SubtestStressNSwarmNConnNStreamNMsg(t, tr, 5, 2, 20, 20)
+func SubtestStress5Swarm2Conn20Stream20Msg(t *testing.T, lo listenerOpts, streamMuxer smux.Transport) {
+	SubtestStressNSwarmNConnNStreamNMsg(t, lo, streamMuxer, 5, 2, 20, 20)
 }
 
-func SubtestStress10Swarm2Conn100Stream100Msg(t *testing.T, tr smux.Transport) {
-	SubtestStressNSwarmNConnNStreamNMsg(t, tr, 10, 2, 100, 100)
+func SubtestStress10Swarm2Conn100Stream100Msg(t *testing.T, lo listenerOpts, streamMuxer smux.Transport) {
+	SubtestStressNSwarmNConnNStreamNMsg(t, lo, streamMuxer, 10, 2, 100, 100)
 }
 
-func SubtestAll(t *testing.T, tr smux.Transport) {
-
+func SubtestAll(t *testing.T, lo listenerOpts, streamMuxer smux.Transport) {
 	tests := []TransportTest{
 		SubtestConstructSwarm,
 		SubtestSimpleWrite,
@@ -424,11 +420,11 @@ func SubtestAll(t *testing.T, tr smux.Transport) {
 		if testing.Verbose() {
 			fmt.Fprintf(os.Stderr, "==== RUN %s\n", GetFunctionName(f))
 		}
-		f(t, tr)
+		f(t, lo, streamMuxer)
 	}
 }
 
-type TransportTest func(t *testing.T, tr smux.Transport)
+type TransportTest func(t *testing.T, lo listenerOpts, streamMuxer smux.Transport)
 
 func TestNoOp(t *testing.T) {}
 

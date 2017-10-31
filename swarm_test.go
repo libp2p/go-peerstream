@@ -1,20 +1,21 @@
 package peerstream
 
 import (
+	"context"
 	"fmt"
-	"net"
 	"sync"
 	"testing"
 	"time"
 
+	iconn "github.com/libp2p/go-libp2p-interface-conn"
 	smux "github.com/libp2p/go-stream-muxer"
 )
 
 type fakeTransport struct {
-	f func(c net.Conn, isServer bool) (smux.Conn, error)
+	f func(c iconn.Conn, isServer bool) (smux.Conn, error)
 }
 
-func (f fakeTransport) NewConn(c net.Conn, isServer bool) (smux.Conn, error) {
+func (f fakeTransport) NewConn(c iconn.Conn, isServer bool) (smux.Conn, error) {
 	return (f.f)(c, isServer)
 }
 
@@ -50,7 +51,10 @@ func (mn *myNotifee) OpenedStream(*Stream) {}
 func (mn *myNotifee) ClosedStream(*Stream) {}
 
 func TestNotificationOrdering(t *testing.T) {
-	s := NewSwarm(nil)
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	s := NewSwarm()
 	notifiee := &myNotifee{conns: make(map[*Conn]bool)}
 
 	s.Notify(notifiee)
@@ -60,8 +64,17 @@ func TestNotificationOrdering(t *testing.T) {
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
+
 			for j := 0; j < 50; j++ {
-				nc := new(fakeconn)
+				conn := newFakeconn()
+				go func() {
+					select {
+					case <-conn.closed:
+					case <-ctx.Done():
+						conn.Close()
+					}
+				}()
+				nc := conn
 				c, err := s.AddConn(nc)
 				if err != nil {
 					t.Error(err)
@@ -79,9 +92,7 @@ func TestNotificationOrdering(t *testing.T) {
 }
 
 func TestBasicSwarm(t *testing.T) {
-	s := NewSwarm(fakeTransport{func(c net.Conn, isServer bool) (smux.Conn, error) {
-		return newFakeSmuxConn(), nil
-	}})
+	s := NewSwarm()
 	c, err := s.AddConn(new(fakeconn), "foo", "bar")
 	if err != nil {
 		t.Fatal(err)

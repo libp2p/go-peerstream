@@ -2,36 +2,27 @@ package peerstream
 
 import (
 	"errors"
-	"net"
 	"sync"
 	"testing"
 
-	tpt "github.com/libp2p/go-libp2p-transport"
+	iconn "github.com/libp2p/go-libp2p-interface-conn"
 	smux "github.com/libp2p/go-stream-muxer"
 )
 
-type fakeconn struct {
-	tpt.Conn
-}
-
-func (f *fakeconn) Close() error {
-	return nil
-}
-
-var _ net.Conn = new(fakeconn)
-
-func newFakeSmuxConn() *fakeSmuxConn {
-	return &fakeSmuxConn{
+func newFakeconn() *fakeconn {
+	return &fakeconn{
 		closed: make(chan struct{}),
 	}
 }
 
-type fakeSmuxConn struct {
+type fakeconn struct {
+	iconn.Conn
+
 	closeLock sync.Mutex
 	closed    chan struct{}
 }
 
-func (fsc *fakeSmuxConn) IsClosed() bool {
+func (fsc *fakeconn) IsClosed() bool {
 	select {
 	case <-fsc.closed:
 		return true
@@ -41,19 +32,19 @@ func (fsc *fakeSmuxConn) IsClosed() bool {
 }
 
 // AcceptStream accepts a stream opened by the other side.
-func (fsc *fakeSmuxConn) AcceptStream() (smux.Stream, error) {
+func (fsc *fakeconn) AcceptStream() (smux.Stream, error) {
 	<-fsc.closed
 	return nil, errors.New("connection closed")
 }
 
-func (fsc *fakeSmuxConn) OpenStream() (smux.Stream, error) {
+func (fsc *fakeconn) OpenStream() (smux.Stream, error) {
 	if fsc.IsClosed() {
 		return nil, errors.New("connection closed")
 	}
 	return &fakeSmuxStream{conn: fsc, closed: make(chan struct{})}, nil
 }
 
-func (fsc *fakeSmuxConn) Close() error {
+func (fsc *fakeconn) Close() error {
 	fsc.closeLock.Lock()
 	defer fsc.closeLock.Unlock()
 	if fsc.IsClosed() {
@@ -63,13 +54,11 @@ func (fsc *fakeSmuxConn) Close() error {
 	return nil
 }
 
-var _ smux.Conn = (*fakeSmuxConn)(nil)
+var _ iconn.Conn = (*fakeconn)(nil)
 
 func TestConnBasic(t *testing.T) {
-	s := NewSwarm(fakeTransport{func(c net.Conn, isServer bool) (smux.Conn, error) {
-		return newFakeSmuxConn(), nil
-	}})
-	nc := new(fakeconn)
+	s := NewSwarm()
+	nc := newFakeconn()
 	c, err := s.AddConn(nc)
 	if err != nil {
 		t.Fatal(err)
@@ -77,20 +66,16 @@ func TestConnBasic(t *testing.T) {
 	if c.Swarm() != s {
 		t.Fatalf("incorrect swarm returned from connection")
 	}
-	if sc, ok := c.Conn().(*fakeSmuxConn); !ok {
-		t.Fatalf("expected a fakeSmuxConn, got %v", sc)
-	}
-
-	if c.NetConn() != nc {
-		t.Fatalf("expected %v, got %v", nc, c.NetConn())
+	if sc, ok := c.Conn().(*fakeconn); !ok {
+		t.Fatalf("expected a fakeconn, got %v", sc)
 	}
 }
 
 func TestConnsWithGroup(t *testing.T) {
-	s := NewSwarm(nil)
-	a := newConn(nil, newFakeSmuxConn(), s)
-	b := newConn(nil, newFakeSmuxConn(), s)
-	c := newConn(nil, newFakeSmuxConn(), s)
+	s := NewSwarm()
+	a := newConn(newFakeconn(), s)
+	b := newConn(newFakeconn(), s)
+	c := newConn(newFakeconn(), s)
 	g := "foo"
 
 	b.Conn().Close()
@@ -130,8 +115,8 @@ func TestConnsWithGroup(t *testing.T) {
 }
 
 func TestConnIdx(t *testing.T) {
-	s := NewSwarm(nil)
-	c, err := s.AddConn(new(fakeconn))
+	s := NewSwarm()
+	c, err := s.AddConn(newFakeconn())
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -181,13 +166,13 @@ func TestConnIdx(t *testing.T) {
 }
 
 func TestAddConnWithGroups(t *testing.T) {
-	s := NewSwarm(nil)
+	s := NewSwarm()
 
 	g := "foo"
 	g2 := "bar"
 	g3 := "baz"
 
-	c, err := s.AddConn(new(fakeconn), g, g2)
+	c, err := s.AddConn(newFakeconn(), g, g2)
 	if !c.InGroup(g) || !c.InGroup(g2) || c.InGroup(g3) {
 		t.Fatal("should be in the appropriate groups")
 	}

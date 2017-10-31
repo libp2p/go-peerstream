@@ -6,7 +6,8 @@ import (
 	"sync"
 
 	tec "github.com/jbenet/go-temp-err-catcher"
-	tpt "github.com/libp2p/go-libp2p-transport"
+	iconn "github.com/libp2p/go-libp2p-interface-conn"
+	ma "github.com/multiformats/go-multiaddr"
 )
 
 // AcceptConcurrency is how many connections can simultaneously be
@@ -16,36 +17,35 @@ import (
 // node to consume all its resources accepting new connections.
 var AcceptConcurrency = 200
 
-// Listener wraps a libp2p-transport Listener and a Swarm and a
-// group set. Listener is returned by Swarm.AddListener() and provides
-// its purpose is to be able to associate Swarm/Listener pairs to groups.
+// Listener wraps a iconn.Listener and a Swarm and a group set. Listener is
+// returned by Swarm.AddListener() and provides its purpose is to be able to
+// associate Swarm/Listener pairs to groups.
 type Listener struct {
-	netList tpt.Listener
-	groups  groupSet
-	swarm   *Swarm
+	listener iconn.Listener
+	groups   groupSet
+	swarm    *Swarm
 
 	acceptErr chan error
 }
 
-func newListener(nl tpt.Listener, s *Swarm) *Listener {
+func newListener(l iconn.Listener, s *Swarm) *Listener {
 	return &Listener{
 		groups:    groupSet{m: make(map[Group]struct{})},
-		netList:   nl,
+		listener:  l,
 		swarm:     s,
 		acceptErr: make(chan error, 10),
 	}
 }
 
-// NetListener returns the libp2p-transport Listener wrapped
-// in Listener.
-func (l *Listener) NetListener() tpt.Listener {
-	return l.netList
+// Multiaddr returns the multiaddr of the underlying iconn.Listener
+func (l *Listener) Multiaddr() ma.Multiaddr {
+	return l.listener.Multiaddr()
 }
 
 // String returns a string representation of the Listener
 func (l *Listener) String() string {
 	f := "<peerstream.Listener %s>"
-	return fmt.Sprintf(f, l.netList.Addr())
+	return fmt.Sprintf(f, l.listener.Addr())
 }
 
 // Groups returns the groups this Listener belongs to
@@ -95,7 +95,7 @@ func (l *Listener) accept() {
 
 	// loop forever accepting connections
 	for {
-		conn, err := l.netList.Accept()
+		conn, err := l.listener.Accept()
 		if err != nil {
 			if catcher.IsTemporary(err) {
 				continue
@@ -109,11 +109,11 @@ func (l *Listener) accept() {
 		// note that this does not rate limit accepts.
 		limit <- struct{}{} // sema down
 		wg.Add(1)
-		go func(conn tpt.Conn) {
+		go func(conn iconn.Conn) {
 			defer func() { <-limit }() // sema up
 			defer wg.Done()
 
-			_, err := l.swarm.addConn(conn, true, l.Groups())
+			_, err := l.swarm.AddConn(conn, l.Groups())
 			if err != nil {
 				l.acceptErr <- err
 				return
@@ -131,7 +131,7 @@ func (l *Listener) AcceptErrors() <-chan error {
 func (l *Listener) teardown() {
 	// in case we exit from network errors (accept fails) but
 	// (a) client doesn't call Close, and (b) listener remains open)
-	l.netList.Close()
+	l.listener.Close()
 
 	close(l.acceptErr)
 
@@ -143,12 +143,12 @@ func (l *Listener) teardown() {
 
 // Close closes the underlying libp2p-transport Listener.
 func (l *Listener) Close() error {
-	return l.netList.Close()
+	return l.listener.Close()
 }
 
 // addListener is the internal version of AddListener.
-func (s *Swarm) addListener(nl tpt.Listener, initialGroups []Group) (*Listener, error) {
-	if nl == nil {
+func (s *Swarm) addListener(il iconn.Listener, initialGroups []Group) (*Listener, error) {
+	if il == nil {
 		return nil, errors.New("nil listener")
 	}
 
@@ -157,12 +157,12 @@ func (s *Swarm) addListener(nl tpt.Listener, initialGroups []Group) (*Listener, 
 
 	// first, check if we already have it...
 	for l := range s.listeners {
-		if l.netList == nl {
+		if l.listener == il {
 			return l, nil
 		}
 	}
 
-	l := newListener(nl, s)
+	l := newListener(il, s)
 	s.listeners[l] = struct{}{}
 	for g := range initialGroups {
 		l.groups.m[g] = struct{}{}
