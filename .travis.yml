@@ -1,19 +1,14 @@
 sudo: false
 
-
 language: go
 go:
-  - 1.8
+  - 1.9.x
   
-install:
-  - go get github.com/whyrusleeping/gx
-  - go get github.com/whyrusleeping/gx-go
-  - gx install --global
+before_install:
+  - make deps
+
 script:
-  - gx test -v -race -coverprofile=coverage.txt -covermode=atomic .
-  
-after_success:
-  - bash <(curl -s https://codecov.io/bash)
+  - bash <(curl -s https://raw.githubusercontent.com/ipfs/ci-helpers/master/travis-ci/run-standard-tests.sh)
 
 cache:
   directories:
@@ -22,3 +17,4 @@ cache:
 notifications:
   email: false
   
+env: GOTFLAGS="-race"
