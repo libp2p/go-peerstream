@@ -5,6 +5,8 @@ go:
   - 1.9.x
   
 before_install:
+  - make -C example deps
+  - make -C muxtest deps
   - make deps
 
 script:
