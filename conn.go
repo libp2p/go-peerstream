@@ -263,6 +263,7 @@ func (s *Swarm) setupConn(netConn tpt.Conn, isServer bool, initialGroups []Group
 		// create a new stream muxer connection
 		c, err := s.transport.NewConn(netConn, isServer)
 		if err != nil {
+			netConn.Close()
 			return nil, err
 		}
 
