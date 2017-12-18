@@ -15,12 +15,6 @@
     },
     {
       "author": "whyrusleeping",
-      "hash": "QmQFhPsJCp82az4SXbziP9QcVSqggEELnV9wGZqMR1EfMB",
-      "name": "go-smux-spdystream",
-      "version": "2.0.0"
-    },
-    {
-      "author": "whyrusleeping",
       "hash": "QmNWCEvi7bPRcvqAV8AKLGVNoQdArWi7NJayka2SM4XtRe",
       "name": "go-smux-yamux",
       "version": "2.0.1"
