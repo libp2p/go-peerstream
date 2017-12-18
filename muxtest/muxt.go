@@ -172,7 +172,7 @@ func SubtestSimpleWrite(t *testing.T, tr smux.Transport) {
 	_, err = s1.Read(buf2)
 	checkErr(t, err)
 	if string(buf2) != string(buf1) {
-		t.Error("buf1 and buf2 not equal: %s != %s", string(buf1), string(buf2))
+		t.Errorf("buf1 and buf2 not equal: %s != %s", string(buf1), string(buf2))
 	}
 
 	buf3 := make([]byte, len(buf1))
@@ -180,7 +180,7 @@ func SubtestSimpleWrite(t *testing.T, tr smux.Transport) {
 	_, err = piper.Read(buf3)
 	checkErr(t, err)
 	if string(buf3) != string(buf1) {
-		t.Error("buf1 and buf3 not equal: %s != %s", string(buf1), string(buf3))
+		t.Errorf("buf1 and buf3 not equal: %s != %s", string(buf1), string(buf3))
 	}
 }
 

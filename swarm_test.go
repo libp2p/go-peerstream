@@ -116,10 +116,10 @@ func TestBasicSwarm(t *testing.T) {
 	}
 
 	// Make sure these don't crash or deadlock.
-	s.String()
-	s.String()
-	s.Dump()
-	s.Dump()
+	_ = s.String()
+	_ = s.String()
+	_ = s.Dump()
+	_ = s.Dump()
 
 	if s.String() == "" {
 		t.Fatal("got no 'String' from swarm")

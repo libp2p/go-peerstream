@@ -7,17 +7,17 @@ blockhandler/blockhandler:
 example:
 	go build example.go
 
-gx-bins:
+gx:
 	go get github.com/whyrusleeping/gx
 	go get github.com/whyrusleeping/gx-go
 
-deps: gx-bins
+deps: gx
 	gx --verbose install --global
 	gx-go rewrite
 
-clean: gx-bins
+publish: gx
 	gx-go rewrite --undo
 	rm example
 	rm blockhandler/blockhandler
 
-.PHONY = clean deps gx-bins examples all
+.PHONY = publish deps gx-bins examples all
