@@ -27,15 +27,15 @@
     },
     {
       "author": "whyrusleeping",
-      "hash": "QmfT8oJ8o8AY417RNu1bUYsnDPipPHSCdVcWjYRsDNFL4M",
+      "hash": "QmRaUZYeJjrUzJr3aTHxUfFjWVzyBzhf6f1SuLTt8Q7Zui",
       "name": "go-peerstream",
-      "version": "2.1.1"
+      "version": "2.1.2"
     },
     {
       "author": "whyrusleeping",
-      "hash": "QmTvzVdANd5UWYxEqV9czC9gPZX6k7BCSVYcz91Gwz6J7A",
+      "hash": "QmRi4eiWUxrJeAcRBBuUfNDCMavQKBbUxLvWEH35evf3cb",
       "name": "go-tcp-transport",
-      "version": "1.2.5"
+      "version": "1.2.6"
     },
     {
       "author": "whyrusleeping",
