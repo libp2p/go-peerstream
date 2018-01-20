@@ -27,21 +27,21 @@
     },
     {
       "author": "multiformats",
-      "hash": "QmSGL5Uoa6gKHgBBwQG8u1CWKUC8ZnwaZiLgFVTFBR2bxr",
+      "hash": "QmRK2LxanhK2gZq6k6R7vk5ZoYZk8ULSSTB7FzDsMUX6CB",
       "name": "go-multiaddr-net",
-      "version": "1.5.6"
+      "version": "1.5.7"
     },
     {
       "author": "whyrusleeping",
-      "hash": "QmQGRkVSA5vTXt9WpJ6nBGnrvq9zRNsfjoNPq8uQrhnBoq",
+      "hash": "QmbbNoAoAymAqijje51yTMbskK1vAQivR25s1BwuLuRksf",
       "name": "go-libp2p-transport",
-      "version": "2.2.10"
+      "version": "2.2.12"
     },
     {
       "author": "multiformats",
-      "hash": "QmW8s4zTsUoX1Q6CeYxVKPyqSKbF7H1YDUyTostBtZ8DaG",
+      "hash": "QmWWQ2Txc2c6tqjsBpzg5Ar652cHPGNsQQp2SejkNmkUMb",
       "name": "go-multiaddr",
-      "version": "1.2.5"
+      "version": "1.2.6"
     }
   ],
   "gxVersion": "0.7.0",
@@ -49,6 +49,6 @@
   "license": "MIT",
   "name": "go-peerstream",
   "releaseCmd": "git commit -a -m \"gx release $VERSION\"",
-  "version": "2.1.2"
+  "version": "2.1.3"
 }
 
